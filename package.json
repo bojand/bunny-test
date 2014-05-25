@@ -1,0 +1,16 @@
+{
+  "name": "bunny-test",
+  "version": "0.0.1",
+  "repository": "git@github.com/bojand/bunny-test",
+  "dependencies": {
+    "express": "~4.1.1",
+    "body-parser": "~1.0.2",
+    "morgan": "~1.0.0",
+    "method-override": "~1.0.0",
+    "amqplib": "~0.1.3",
+    "underscore": "~1.6.0"
+  },
+  "engines": {
+    "node": "0.10.x"
+  }
+}
