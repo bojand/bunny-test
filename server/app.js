@@ -9,9 +9,13 @@ var routes = require('./routes');
 var AMQP = require('./lib/amqp');
 
 var ServerApp = function () {
-
+  var self = this;
   this.amqp = new AMQP(config.amqp_url);
-  this.amqp.init(this.setup.bind(this));
+  this.amqp.init(function() {
+    self.amqp.addWorkerQueue('work_queue');
+    self.amqp.addRpcQueue('fib_queue');
+    self.setup.bind(self)();
+  });
 };
 
 ServerApp.prototype.setup = function () {

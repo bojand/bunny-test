@@ -18,7 +18,23 @@ exports.work = function (req, res) {
 };
 
 exports.fib = function (req, res) {
-  res.send(200);
+  var n = req.param('number');
+
+  if (n) {
+    App.amqp.send('fib_queue', n, function (err, rpcRes) {
+      console.log('done');
+      console.log(rpcRes);
+      if (err) {
+        console.dir(err);
+        return res.send(500);
+      }
+
+      return res.send(200, {n: rpcRes });
+    });
+  }
+  else {
+    res.send(400, 'Missing number');
+  }
 };
 
 exports.cap = function (req, res) {
