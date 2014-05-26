@@ -1,6 +1,7 @@
 var amqp = require('amqplib');
 var _ = require('underscore');
 var uuid = require('node-uuid');
+var debug = require('debug')('bunny');
 
 var noop = function () {};
 
@@ -39,22 +40,22 @@ var getDoneHandler = function (fn) {
 AMQP.prototype.init = function (fn) {
   if (!fn) fn = noop;
   var self = this;
-  console.log('connecting');
+  debug('connecting amqp');
 
   var onError = getErrorHandler(fn);
   var onDone = getDoneHandler(fn);
 
   amqp.connect(this.connOpt).then(function (conn) {
-    console.log('connected');
+    debug('connected amqp');
     self.conn = conn;
     return conn.createChannel().then(function (ch) {
-      console.log('channel created');
+      debug('channel created');
       self.ch = ch;
     });
   }).then(onDone, onError);
 };
 
-AMQP.prototype.addQueue = function (queue, type, options, fn) {
+AMQP.prototype.assertQueue = function (queue, options, fn) {
   if (typeof options === 'function') {
     fn = options;
     options = undefined;
@@ -62,37 +63,23 @@ AMQP.prototype.addQueue = function (queue, type, options, fn) {
 
   if (!fn) fn = noop;
 
-  var self = this;
-
   var onError = getErrorHandler(fn);
   var onDone = getDoneHandler(fn);
 
-  var queueName = queue;
-
-  if (!options) {
-    if (type === 'worker') {
-      options = { durable: true };
-    }
-    else if (type === 'rpc') {
-      // we're creating the reply queue in this case
-      options = {exclusive: true};
-      queueName = '';
-    }
-  }
-
-  var ok = self.ch.assertQueue(queueName, options).then(function (q) {
+  this.ch.assertQueue(queue, options).then(function (q) {
     return q;
-  });
-
-  ok.then(function (q) {
-    var qname = q.queue;
-    self.queues[queue] = new Queue(type, q);
-
-    if (type === 'rpc') {
-      return self.ch.consume(qname, self.rpcHandler.bind(self), {noAck: true})
-        .then(function () { return q; });
-    }
   }).then(onDone, onError);
+};
+
+AMQP.prototype.addQueue = function (queue, options, fn) {
+  var self = this;
+  this.assertQueue(queue, options, function (err, q) {
+    if (queue && q) {
+      debug('added generic queue %s', q.queue);
+      self.queues[queue] = new Queue('generic', q);
+    }
+    return fn(err, q);
+  });
 };
 
 /**
@@ -102,7 +89,27 @@ AMQP.prototype.addQueue = function (queue, type, options, fn) {
  * @param fn
  */
 AMQP.prototype.addWorkerQueue = function (queue, options, fn) {
-  return this.addQueue(queue, 'worker', options, fn);
+  var self = this;
+
+  if (typeof options === 'function') {
+    fn = options;
+    options = undefined;
+  }
+
+  if (!fn) fn = noop;
+
+  if (!options) {
+    options = {durable: true};
+  }
+
+  return this.assertQueue(queue, options, function (err, q) {
+    if (queue && q) {
+      debug('added worker queue %s', q.queue);
+      self.queues[queue] = new Queue('work', q);
+    }
+
+    fn(err, q);
+  });
 };
 
 /**
@@ -112,7 +119,33 @@ AMQP.prototype.addWorkerQueue = function (queue, options, fn) {
  * @param fn
  */
 AMQP.prototype.addRpcQueue = function (queue, options, fn) {
-  return this.addQueue(queue, 'rpc', options, fn);
+  var self = this;
+
+  if (typeof options === 'function') {
+    fn = options;
+    options = undefined;
+  }
+
+  if (!fn) fn = noop;
+
+  if (!options) {
+    options = {exclusive: true};
+  }
+
+  return this.assertQueue('', options, function (err, q) {
+    if (queue && q) {
+      var qname = q.queue;
+      self.queues[queue] = new Queue('rpc', q);
+
+      return self.ch.consume(qname, self.rpcHandler.bind(self), {noAck: true})
+        .then(function () {
+          debug('added rpc queue %s', queue);
+          fn(null, q);
+        }, function (err) {
+          fn(err);
+        });
+    }
+  });
 };
 
 AMQP.prototype.close = function () {
@@ -155,8 +188,8 @@ AMQP.prototype.rpcHandler = function (msg) {
     var reply, err;
     try {
       reply = this.convertReply(msg);
+      debug('got rpc reply');
     } catch (e) {
-      console.log(e);
       err = e;
     }
 
@@ -164,9 +197,35 @@ AMQP.prototype.rpcHandler = function (msg) {
 
     delete this.rpcCB[msg.properties.correlationId];
   }
+  else if (msg.properties.correlationId && !this.rpcCB[msg.properties.correlationId]) {
+    debug('got rpc reply but to unknown correlation id', msg.properties.correlationId);
+  }
+  else {
+    debug('got rpc reply but no correlation id');
+  }
 };
 
 AMQP.prototype.send = function (queue, message, options, fn) {
+  if (typeof options === 'function') {
+    fn = options;
+    options = undefined;
+  }
+
+  if (!fn) fn = noop;
+
+  try {
+    var data = this.prepareMessage(message);
+    this.ch.sendToQueue(queue, data, options);
+  } catch (e) {
+    return fn(e);
+  }
+
+  debug('Sent message to %s', queue);
+  return fn();
+};
+
+AMQP.prototype.sendWorker = function (queue, message, options, fn) {
+  var self = this;
   if (typeof options === 'function') {
     fn = options;
     options = {};
@@ -175,31 +234,64 @@ AMQP.prototype.send = function (queue, message, options, fn) {
   if (!fn) fn = noop;
 
   var opts = Object.create(options);
+  if (opts.deliveryMode === undefined) { opts.deliveryMode = true; }
+
+  var q = this.queues[queue];
+  if (q) {
+    this.send(queue, message, opts, fn);
+  }
+  else {
+    self.addWorkerQueue(queue, function (err, q) {
+      if (err) {
+        return fn(err);
+      }
+      else {
+        self.send(queue, message, opts, fn);
+      }
+    });
+  }
+};
+
+AMQP.prototype.sendRpc = function (queue, message, options, fn) {
+  var self = this;
+
+  if (typeof options === 'function') {
+    fn = options;
+    options = {};
+  }
+
+  if (!fn) fn = noop;
+
+  var dorpc = function (replyTo) {
+    var opts = Object.create(options);
+    var corrId = uuid();
+    opts.correlationId = corrId;
+    opts.replyTo = replyTo;
+
+    self.rpcCB[corrId] = fn;
+
+    self.send(queue, message, opts, function (err) {
+      if (err) {
+        fn(err);
+        delete self.rpcCB[opts.correlationId];
+      }
+    });
+  };
 
   var q = this.queues[queue];
 
   if (q) {
-    if (q.type === 'worker') {
-      if (opts.deliveryMode === undefined) { opts.deliveryMode = true; }
-    }
-    else if (q.type === 'rpc') {
-      var corrId = uuid();
-      opts.correlationId = corrId;
-      opts.replyTo = q.queue.queue;
-      this.rpcCB[corrId] = fn;
-    }
+    dorpc(q.queue.queue);
   }
-
-  try {
-    var data = this.prepareMessage(message);
-    this.ch.sendToQueue(queue, data, opts);
-  } catch (e) {
-    return fn(e);
-  }
-
-  console.log(" [x] Sent message to " + queue);
-  if (q.type !== 'rpc') {
-    return fn();
+  else {
+    self.addRpcQueue(queue, function (err, rpcq) {
+      if (err) {
+        return fn(err);
+      }
+      else {
+        dorpc(rpcq.queue);
+      }
+    });
   }
 };
 

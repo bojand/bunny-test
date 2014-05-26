@@ -9,7 +9,8 @@
     "method-override": "~1.0.0",
     "amqplib": "~0.1.3",
     "underscore": "~1.6.0",
-    "node-uuid": "1.4.1"
+    "node-uuid": "~1.4.1",
+    "debug": "~0.8.1"
   },
   "engines": {
     "node": "0.10.x"
