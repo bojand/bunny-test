@@ -5,11 +5,6 @@ var debug = require('debug')('bunny');
 
 var noop = function () {};
 
-var Queue = function (type, qObj) {
-  this.type = type;
-  this.queue = qObj;
-};
-
 var AMQP = function (url, socketOptions) {
   this.url = url;
   this.connOpt = socketOptions;
@@ -77,18 +72,6 @@ AMQP.prototype.assertQueue = function (queue, options, fn) {
   }).then(onDone, onError);
 };
 
-AMQP.prototype.addQueue = function (queue, options, fn) {
-  var self = this;
-
-  this.assertQueue(queue, options, function (err, q) {
-    if (queue && q) {
-      debug('added generic queue %s', q.queue);
-      self.queues[queue] = new Queue('generic', q);
-    }
-    return fn(err, q);
-  });
-};
-
 /**
  * Add worker queue with options. Defaults options are `durable:true`
  * @param queue
@@ -112,7 +95,7 @@ AMQP.prototype.addWorkerQueue = function (queue, options, fn) {
   return this.assertQueue(queue, options, function (err, q) {
     if (queue && q) {
       debug('added worker queue %s', q.queue);
-      self.queues[queue] = new Queue('work', q);
+      self.queues[queue] = q;
     }
 
     fn(err, q);
@@ -139,20 +122,28 @@ AMQP.prototype.addRpcQueue = function (queue, options, fn) {
     options = {exclusive: true};
   }
 
-  return this.assertQueue('', options, function (err, q) {
-    if (queue && q) {
-      var qname = q.queue;
-      self.queues[queue] = new Queue('rpc', q);
+  var inQ = queue + '_rpc_queue_' + process.pid;
 
-      return self.ch.consume(qname, self.rpcHandler.bind(self), {noAck: true})
-        .then(function () {
-          debug('added rpc queue %s', queue);
-          fn(null, q);
-        }, function (err) {
-          fn(err);
-        });
-    }
-  });
+  if (self.queues[queue] && self.queues[queue].queue && self.queues[queue].queue === inQ) {
+    return fn(null, self.queues[queue]);
+  }
+  else {
+
+    return this.assertQueue(inQ, options, function (err, q) {
+      if (queue && q) {
+        var qname = q.queue;
+        self.queues[queue] = q;
+
+        return self.ch.consume(qname, self.rpcHandler.bind(self), {noAck: true})
+          .then(function () {
+            debug('added rpc queue %s', queue);
+            fn(null, q);
+          }, function (err) {
+            fn(err);
+          });
+      }
+    });
+  }
 };
 
 AMQP.prototype.close = function () {
@@ -310,21 +301,14 @@ AMQP.prototype.rpc = function (queue, message, options, fn) {
     });
   };
 
-  var q = this.queues[queue];
-
-  if (q) {
-    dorpc(q.queue.queue);
-  }
-  else {
-    self.addRpcQueue(queue, function (err, rpcq) {
-      if (err) {
-        return fn(err);
-      }
-      else {
-        dorpc(rpcq.queue);
-      }
-    });
-  }
+  self.addRpcQueue(queue, function (err, q) {
+    if (!err) {
+      dorpc(q.queue);
+    }
+    else {
+      return fn(err);
+    }
+  });
 };
 
 AMQP.prototype.pubsub = function (exchange, message, options, fn) {
