@@ -1,6 +1,8 @@
 //var amqp = require('amqplib');
 var config = require('../config');
-var AMQP = require('../server/lib/amqp');
+//var AMQP = require('../server/lib/amqp');
+
+var BunnyDo = require('bunnydo');
 
 function doWork(msg) {
   try {
@@ -35,7 +37,7 @@ function sleep(callback, time) {
   callback();
 }
 
-var amqp = new AMQP(config.amqp_url);
+var amqp = new BunnyDo(config.amqp_url);
 amqp.init(function (err) {
   if (err) {
     console.log(err);

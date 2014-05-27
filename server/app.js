@@ -3,14 +3,15 @@ var express = require('express');
 var bodyParser = require('body-parser');
 var morgan = require('morgan');
 var methodOverride = require('method-override');
+var BunnyDo = require('bunnydo');
 
 var config = require('../config');
 var routes = require('./routes');
-var AMQP = require('./lib/amqp');
+//var AMQP = require('./lib/amqp');
 
 var ServerApp = function () {
   var self = this;
-  this.amqp = new AMQP(config.amqp_url);
+  this.amqp = new BunnyDo(config.amqp_url);
   this.amqp.init(self.setup.bind(self));
 };
 
