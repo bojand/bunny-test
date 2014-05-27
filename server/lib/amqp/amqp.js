@@ -83,13 +83,13 @@ AMQP.prototype.addWorkerQueue = function (queue, options, fn) {
 
   if (typeof options === 'function') {
     fn = options;
-    options = undefined;
+    options = {};
   }
 
   if (!fn) fn = noop;
 
-  if (!options) {
-    options = {durable: true};
+  if (typeof options !== 'boolean') {
+    options.durable = true;
   }
 
   return this.assertQueue(queue, options, function (err, q) {
@@ -113,12 +113,12 @@ AMQP.prototype.addRpcQueue = function (queue, options, fn) {
 
   if (typeof options === 'function') {
     fn = options;
-    options = undefined;
+    options = {};
   }
 
   if (!fn) fn = noop;
 
-  if (!options) {
+  if (typeof options.exclusive !== 'boolean') {
     options = {exclusive: true};
   }
 
@@ -248,7 +248,9 @@ AMQP.prototype.worker = function (queue, message, options, fn) {
   if (!fn) fn = noop;
 
   var opts = Object.create(options);
-  if (opts.deliveryMode === undefined) { opts.deliveryMode = true; }
+  if (typeof opts.deliveryMode !== 'boolean') {
+    opts.deliveryMode = true;
+  }
 
   var q = this.queues[queue];
   if (q) {
