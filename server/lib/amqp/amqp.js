@@ -17,6 +17,7 @@ var AMQP = function (url, socketOptions) {
   this.queues = {};
   this.ch = null;
   this.rpcCB = {};
+  this.exBindings = {};
 };
 
 var getErrorHandler = function (fn) {
@@ -431,10 +432,16 @@ AMQP.prototype.onPubsub = function (exchange, fn) {
   });
 
   ok = ok.then(function (qok) {
-    return self.ch.bindQueue(qok.queue, exchange, '').then(function () {
-      debug('got queue %s for exchange %s', qok.queue, exchange);
-      return qok.queue;
-    });
+    if (!self.exBindings[exchange] || self.exBindings[exchange].queue !== exq) {
+      return self.ch.bindQueue(qok.queue, exchange, '').then(function () {
+        debug('bound queue %s for exchange %s', qok.queue, exchange);
+        self.exBindings[exchange] = qok;
+        return qok.queue;
+      });
+    }
+    else {
+      return self.exBindings[exchange].queue;
+    }
   });
 
   ok.then(function (queue) {
