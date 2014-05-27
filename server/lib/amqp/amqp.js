@@ -326,6 +326,28 @@ AMQP.prototype.rpc = function (queue, message, options, fn) {
   }
 };
 
+AMQP.prototype.pubsub = function (exchange, message, options, fn) {
+  var self = this;
+
+  if (typeof options === 'function') {
+    fn = options;
+    options = {};
+  }
+
+  if (!fn) fn = noop;
+
+  this.ch.assertExchange(exchange, 'fanout', {durable: false})
+    .then(function (ex) {
+      var data = self.toAMQPMessage(message);
+      self.ch.publish(exchange, '', data);
+      debug('sent pubsub to %s', exchange);
+      return fn();
+    },
+    function (err) {
+      return fn(err);
+    });
+};
+
 AMQP.prototype.onWorker = function (queue, fn) {
   var self = this;
   if (!fn) fn = noop;
@@ -383,6 +405,44 @@ AMQP.prototype.onRpc = function (queue, fn) {
 
       return fn(err, inData, replyFn);
     });
+  }).then(null, console.warn);
+};
+
+AMQP.prototype.onPubsub = function (exchange, fn) {
+  var self = this;
+  if (!fn) fn = noop;
+
+  var exq = exchange + '_queue_' + process.pid;
+
+  var handler = function (msg) {
+
+    debug('got data on pubsub exchange %s', msg.fields.exchange);
+
+    var err, data;
+    data = self.fromAMQPMessage(msg);
+
+    return fn(err, data);
+  };
+
+  var ok = this.ch.assertExchange(exchange, 'fanout', {durable: false});
+
+  ok = ok.then(function () {
+    return self.ch.assertQueue(exq, {exclusive: true});
+  });
+
+  ok = ok.then(function (qok) {
+    return self.ch.bindQueue(qok.queue, exchange, '').then(function () {
+      debug('got queue %s for exchange %s', qok.queue, exchange);
+      return qok.queue;
+    });
+  });
+
+  ok.then(function (queue) {
+    return self.ch.consume(queue, handler, {noAck: true});
+  });
+
+  return ok.then(function () {
+    debug('set up pub sub exchange');
   }).then(null, console.warn);
 };
 

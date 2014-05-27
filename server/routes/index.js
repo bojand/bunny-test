@@ -5,4 +5,5 @@ module.exports = function (app) {
   app.post('/work', api.work);
   app.post('/cap', api.cap);
   app.post('/prog', api.prog);
+  app.post('/pub', api.pub);
 };

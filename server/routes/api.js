@@ -63,3 +63,16 @@ exports.prog = function (req, res) {
     }
   });
 };
+
+exports.pub = function (req, res) {
+  var msg = req.param('msg') || 'Simple message to worker';
+
+  App.amqp.pubsub('pubsub_logs', msg, function (err) {
+    if (err) {
+      console.dir(err);
+      return res.send(500);
+    }
+
+    return res.send(200);
+  });
+};

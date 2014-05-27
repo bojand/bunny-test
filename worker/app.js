@@ -89,5 +89,12 @@ amqp.init(function (err) {
         }
       }
     });
+
+    amqp.onPubsub('pubsub_logs', function (err, msg) {
+      if (err) { console.dir(err); }
+      else {
+        console.log(" [x] Received logs '%s'", msg);
+      }
+    });
   }
 });
