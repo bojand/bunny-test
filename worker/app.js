@@ -79,14 +79,13 @@ amqp.init(function (err) {
       else {
         var total = 10;
         var i = 0;
-        while (i < total) {
-          sleep(function () {
-            var n = Math.round(((i + 1) / total) * 100);
-            console.log(n);
-            i = i + 1;
-            replyFn(n);
-          }, 200);
-        }
+        setTimeout(function send() {
+          var n = Math.round(((i + 1) / total) * 100);
+          console.log(n);
+          i++;
+          if (i < total) setTimeout(send, 500);
+          replyFn(n);
+        }, 500);
       }
     });
 

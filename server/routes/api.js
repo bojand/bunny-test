@@ -58,7 +58,6 @@ exports.prog = function (req, res) {
     console.dir(rpcRes);
 
     if (rpcRes.toString() === '100') {
-      console.log('deleteing callback');
       App.amqp.deleteRpcCallback(fullMsg.properties.correlationId);
     }
   });

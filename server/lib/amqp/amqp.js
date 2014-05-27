@@ -194,6 +194,7 @@ AMQP.prototype.fromAMQPMessage = function (message) {
 };
 
 AMQP.prototype.deleteRpcCallback = function (corrId) {
+  debug('deleting callback for corr id: %s', corrId);
   delete this.rpcCB[corrId];
 };
 
@@ -211,7 +212,7 @@ AMQP.prototype.rpcHandler = function (msg) {
     cb(err, reply, msg);
 
     if (cbObj.autoDelete !== false) {
-      delete this.rpcCB[corrId];
+      this.deleteRpcCallback(corrId);
     }
   }
   else if (corrId && !this.rpcCB[corrId]) {
