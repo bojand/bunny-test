@@ -363,6 +363,8 @@ AMQP.prototype.onRpc = function (queue, fn) {
 
       var ackd = false;
 
+      // TODO need to handle fail on send and 'drain' event?
+
       var replyFn = function (response) {
         if (replyQ && corrId) {
 

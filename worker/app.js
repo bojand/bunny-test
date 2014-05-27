@@ -27,7 +27,7 @@ function fib(n) {
 }
 
 // DON'T DO THIS LOL
-function sleep(time, callback) {
+function sleep(callback, time) {
   var stop = new Date().getTime();
   while (new Date().getTime() < stop + time) {
     ;
@@ -78,12 +78,14 @@ amqp.init(function (err) {
       }
       else {
         var total = 10;
-        for (var i = 0; i < total; i++) {
-          sleep(1000, function () {
-            var n = Math.round(((i + 1) / 10) * 100);
+        var i = 0;
+        while (i < total) {
+          sleep(function () {
+            var n = Math.round(((i + 1) / total) * 100);
             console.log(n);
+            i = i + 1;
             replyFn(n);
-          });
+          }, 200);
         }
       }
     });
