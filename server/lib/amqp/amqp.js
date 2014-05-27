@@ -50,6 +50,7 @@ AMQP.prototype.init = function (fn) {
     self.conn = conn;
     return conn.createChannel().then(function (ch) {
       debug('channel created');
+      ch.prefetch(1);
       self.ch = ch;
     });
   }).then(onDone, onError);
@@ -66,6 +67,10 @@ AMQP.prototype.assertQueue = function (queue, options, fn) {
   var onError = getErrorHandler(fn);
   var onDone = getDoneHandler(fn);
 
+  if (queue && this.queues[queue]) {
+    console.warn('adding queue that already exists');
+  }
+
   this.ch.assertQueue(queue, options).then(function (q) {
     return q;
   }).then(onDone, onError);
@@ -73,6 +78,7 @@ AMQP.prototype.assertQueue = function (queue, options, fn) {
 
 AMQP.prototype.addQueue = function (queue, options, fn) {
   var self = this;
+
   this.assertQueue(queue, options, function (err, q) {
     if (queue && q) {
       debug('added generic queue %s', q.queue);
@@ -158,11 +164,15 @@ AMQP.prototype.close = function () {
   }
 };
 
-AMQP.prototype.prepareMessage = function (message) {
+AMQP.prototype.toAMQPMessage = function (message) {
   var c = _.clone(message);
 
   if (typeof c === 'object' && !Buffer.isBuffer(c)) {
     c = JSON.stringify(c);
+  }
+
+  if (typeof c !== 'string') {
+    c = c.toString();
   }
 
   if (typeof c === 'string') {
@@ -172,7 +182,7 @@ AMQP.prototype.prepareMessage = function (message) {
   return c;
 };
 
-AMQP.prototype.convertReply = function (message) {
+AMQP.prototype.fromAMQPMessage = function (message) {
   var obj = _.clone(message);
   if ((message && message.content) || Buffer.isBuffer(message)) {
     var content = message.content.toString();
@@ -183,12 +193,13 @@ AMQP.prototype.convertReply = function (message) {
 };
 
 AMQP.prototype.rpcHandler = function (msg) {
-  if (msg.properties.correlationId && this.rpcCB[msg.properties.correlationId]) {
-    var cb = this.rpcCB[msg.properties.correlationId];
+  var corrId = msg.properties ? msg.properties.correlationId : '';
+  if (corrId && this.rpcCB[corrId]) {
+    var cb = this.rpcCB[corrId];
     var reply, err;
     try {
-      reply = this.convertReply(msg);
-      debug('got rpc reply');
+      reply = this.fromAMQPMessage(msg);
+      debug('got rpc reply. corr id: %s', corrId);
     } catch (e) {
       err = e;
     }
@@ -197,8 +208,8 @@ AMQP.prototype.rpcHandler = function (msg) {
 
     delete this.rpcCB[msg.properties.correlationId];
   }
-  else if (msg.properties.correlationId && !this.rpcCB[msg.properties.correlationId]) {
-    debug('got rpc reply but to unknown correlation id', msg.properties.correlationId);
+  else if (corrId && !this.rpcCB[corrId]) {
+    debug('got rpc reply but to unknown correlation id: %s', corrId);
   }
   else {
     debug('got rpc reply but no correlation id');
@@ -214,7 +225,7 @@ AMQP.prototype.send = function (queue, message, options, fn) {
   if (!fn) fn = noop;
 
   try {
-    var data = this.prepareMessage(message);
+    var data = this.toAMQPMessage(message);
     this.ch.sendToQueue(queue, data, options);
   } catch (e) {
     return fn(e);
@@ -224,7 +235,7 @@ AMQP.prototype.send = function (queue, message, options, fn) {
   return fn();
 };
 
-AMQP.prototype.sendWorker = function (queue, message, options, fn) {
+AMQP.prototype.worker = function (queue, message, options, fn) {
   var self = this;
   if (typeof options === 'function') {
     fn = options;
@@ -252,7 +263,7 @@ AMQP.prototype.sendWorker = function (queue, message, options, fn) {
   }
 };
 
-AMQP.prototype.sendRpc = function (queue, message, options, fn) {
+AMQP.prototype.rpc = function (queue, message, options, fn) {
   var self = this;
 
   if (typeof options === 'function') {
@@ -293,6 +304,68 @@ AMQP.prototype.sendRpc = function (queue, message, options, fn) {
       }
     });
   }
+};
+
+AMQP.prototype.onWorker = function (queue, fn) {
+  var self = this;
+  if (!fn) fn = noop;
+
+  var ok = this.ch.assertQueue(queue, {durable: true});
+
+  ok.then(function () {
+    self.ch.consume(queue, function (msg) {
+      debug('got data on worker queue');
+      var err, data;
+
+      try {
+        data = self.fromAMQPMessage(msg);
+      } catch (e) {
+        err = e;
+      }
+
+      return fn(err, data);
+    }, {noAck: true});
+  }).then(null, console.warn);
+};
+
+AMQP.prototype.onRpc = function (queue, fn) {
+  var self = this;
+  if (!fn) fn = noop;
+
+  var ok = this.ch.assertQueue(queue, {durable: true});
+
+  ok.then(function () {
+    self.ch.consume(queue, function (msg) {
+      var err, inData;
+      var replyQ = msg.properties.replyTo;
+      var corrId = msg.properties.correlationId;
+
+      debug('got data on rpc queue. corr id: %s', corrId);
+
+      var replyFn = function (response) {
+        if (replyQ && corrId) {
+          try {
+            var outData = self.toAMQPMessage(response);
+            self.ch.sendToQueue(msg.properties.replyTo,
+              outData,
+              {correlationId: corrId});
+
+            self.ch.ack(msg);
+          } catch (e) {
+            console.log(e);
+          }
+        }
+      };
+
+      try {
+        inData = self.fromAMQPMessage(msg);
+      } catch (e) {
+        err = e;
+      }
+
+      return fn(err, inData, replyFn);
+    });
+  }).then(null, console.warn);
 };
 
 module.exports = AMQP;

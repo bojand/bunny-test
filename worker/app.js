@@ -1,5 +1,6 @@
-var amqp = require('amqplib');
+//var amqp = require('amqplib');
 var config = require('../config');
+var AMQP = require('../server/lib/amqp');
 
 function doWork(msg) {
   try {
@@ -25,34 +26,30 @@ function fib(n) {
   return a;
 }
 
-amqp.connect(config.amqp_rul).then(function (conn) {
-  process.once('SIGINT', function () { conn.close(); });
-
-  return conn.createChannel().then(function (ch) {
-    var ok = ch.assertQueue('work_queue', {durable: true});
-    ok = ch.assertQueue('fib_queue', {durable: true});
-
-    function reply(msg) {
-      var n = parseInt(msg.content.toString());
-      console.log(' [.] fib(%d)', n);
-      var response = fib(n);
-      var replyQ = msg.properties.replyTo;
-      var corrId = msg.properties.correlationId;
-      if (replyQ && corrId) {
-        ch.sendToQueue(msg.properties.replyTo,
-          new Buffer(response.toString()),
-          {correlationId: corrId});
+var amqp = new AMQP(config.amqp_url);
+amqp.init(function (err) {
+  if (err) {
+    console.log(err);
+  }
+  else {
+    amqp.onWorker('work_queue', function (err, msg) {
+      if (err) { console.dir(err); }
+      else {
+        console.log(" [x] Received '%s'", msg.message);
       }
-      ch.ack(msg);
-    }
-
-    ok = ok.then(function () {
-      ch.prefetch(1);
-      ch.consume('work_queue', doWork, {noAck: true});
-      ch.consume('fib_queue', reply);
-      console.log(" [*] Waiting for messages. To exit press CTRL+C");
     });
 
-    return ok;
-  });
-}).then(null, console.warn);
+    amqp.onRpc('fib_queue', function (err, msg, replyFn) {
+      if (err) {
+        console.dir(err);
+        replyFn({error: err.toString()})
+      }
+      else {
+        var n = msg;
+        var response = fib(n);
+
+        replyFn(response);
+      }
+    });
+  }
+});

@@ -5,7 +5,7 @@ exports.work = function (req, res) {
     message: msg
   };
 
-  App.amqp.sendWorker('work_queue', data, function (err) {
+  App.amqp.worker('work_queue', data, function (err) {
     if (err) {
       console.dir(err);
       return res.send(500);
@@ -19,7 +19,7 @@ exports.fib = function (req, res) {
   var n = req.param('number');
 
   if (n) {
-    App.amqp.sendRpc('fib_queue', n, function (err, rpcRes) {
+    App.amqp.rpc('fib_queue', n, function (err, rpcRes) {
       if (err) {
         console.dir(err);
         return res.send(500);
