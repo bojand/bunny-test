@@ -26,6 +26,15 @@ function fib(n) {
   return a;
 }
 
+// DON'T DO THIS LOL
+function sleep(time, callback) {
+  var stop = new Date().getTime();
+  while (new Date().getTime() < stop + time) {
+    ;
+  }
+  callback();
+}
+
 var amqp = new AMQP(config.amqp_url);
 amqp.init(function (err) {
   if (err) {
@@ -49,6 +58,33 @@ amqp.init(function (err) {
         var response = fib(n);
 
         replyFn(response);
+      }
+    });
+
+    amqp.onRpc('cap_queue', function (err, msg, replyFn) {
+      if (err) {
+        console.dir(err);
+        replyFn({error: err.toString()})
+      }
+      else {
+        replyFn(msg.toUpperCase());
+      }
+    });
+
+    amqp.onRpc('prog_queue', function (err, msg, replyFn) {
+      if (err) {
+        console.dir(err);
+        replyFn({error: err.toString()})
+      }
+      else {
+        var total = 10;
+        for (var i = 0; i < total; i++) {
+          sleep(1000, function () {
+            var n = Math.round(((i + 1) / 10) * 100);
+            console.log(n);
+            replyFn(n);
+          });
+        }
       }
     });
   }

@@ -168,7 +168,11 @@ AMQP.prototype.toAMQPMessage = function (message) {
   var c = _.clone(message);
 
   if (typeof c === 'object' && !Buffer.isBuffer(c)) {
-    c = JSON.stringify(c);
+    try {
+      c = JSON.stringify(c);
+    }
+    catch (e) {
+    }
   }
 
   if (typeof c !== 'string') {
@@ -184,29 +188,39 @@ AMQP.prototype.toAMQPMessage = function (message) {
 
 AMQP.prototype.fromAMQPMessage = function (message) {
   var obj = _.clone(message);
-  if ((message && message.content) || Buffer.isBuffer(message)) {
-    var content = message.content.toString();
-    obj = JSON.parse(content);
+  if (message && message.content) {
+    obj = message.content.toString();
+
+    try {
+      obj = JSON.parse(obj);
+    }
+    catch (e) {
+    }
   }
 
   return obj;
 };
 
+AMQP.prototype.deleteRpcCallback = function (corrId) {
+  delete this.rpcCB[corrId];
+};
+
 AMQP.prototype.rpcHandler = function (msg) {
   var corrId = msg.properties ? msg.properties.correlationId : '';
   if (corrId && this.rpcCB[corrId]) {
-    var cb = this.rpcCB[corrId];
+    var cbObj = this.rpcCB[corrId];
+    var cb = cbObj.cb;
     var reply, err;
-    try {
-      reply = this.fromAMQPMessage(msg);
-      debug('got rpc reply. corr id: %s', corrId);
-    } catch (e) {
-      err = e;
+
+    reply = this.fromAMQPMessage(msg);
+
+    debug('got rpc reply on %s. corr id: %s', msg.fields.routingKey, corrId);
+
+    cb(err, reply, msg);
+
+    if (cbObj.autoDelete !== false) {
+      delete this.rpcCB[corrId];
     }
-
-    cb(err, reply);
-
-    delete this.rpcCB[msg.properties.correlationId];
   }
   else if (corrId && !this.rpcCB[corrId]) {
     debug('got rpc reply but to unknown correlation id: %s', corrId);
@@ -224,12 +238,8 @@ AMQP.prototype.send = function (queue, message, options, fn) {
 
   if (!fn) fn = noop;
 
-  try {
-    var data = this.toAMQPMessage(message);
-    this.ch.sendToQueue(queue, data, options);
-  } catch (e) {
-    return fn(e);
-  }
+  var data = this.toAMQPMessage(message);
+  this.ch.sendToQueue(queue, data, options);
 
   debug('Sent message to %s', queue);
   return fn();
@@ -279,12 +289,22 @@ AMQP.prototype.rpc = function (queue, message, options, fn) {
     opts.correlationId = corrId;
     opts.replyTo = replyTo;
 
-    self.rpcCB[corrId] = fn;
+    var autoDelete = true;
+    if (typeof options.autoDeleteCallback === 'boolean') {
+      autoDelete = options.autoDeleteCallback;
+    }
+
+    var cb = {
+      cb: fn,
+      autoDelete: autoDelete
+    };
+
+    self.rpcCB[corrId] = cb;
 
     self.send(queue, message, opts, function (err) {
       if (err) {
         fn(err);
-        delete self.rpcCB[opts.correlationId];
+        delete self.rpcCB[corrId];
       }
     });
   };
@@ -315,13 +335,9 @@ AMQP.prototype.onWorker = function (queue, fn) {
   ok.then(function () {
     self.ch.consume(queue, function (msg) {
       debug('got data on worker queue');
-      var err, data;
 
-      try {
-        data = self.fromAMQPMessage(msg);
-      } catch (e) {
-        err = e;
-      }
+      var err, data;
+      data = self.fromAMQPMessage(msg);
 
       return fn(err, data);
     }, {noAck: true});
@@ -339,29 +355,29 @@ AMQP.prototype.onRpc = function (queue, fn) {
       var err, inData;
       var replyQ = msg.properties.replyTo;
       var corrId = msg.properties.correlationId;
+      var replyTo = msg.properties.replyTo;
+      var routingKey = msg.fields.routingKey;
+      var msgOpts = {correlationId: corrId};
 
-      debug('got data on rpc queue. corr id: %s', corrId);
+      debug('got data from rpc queue %s. corr id: %s', routingKey, corrId);
+
+      var ackd = false;
 
       var replyFn = function (response) {
         if (replyQ && corrId) {
-          try {
-            var outData = self.toAMQPMessage(response);
-            self.ch.sendToQueue(msg.properties.replyTo,
-              outData,
-              {correlationId: corrId});
 
+          var outData = self.toAMQPMessage(response);
+          self.ch.sendToQueue(replyTo, outData, msgOpts);
+          debug('sent rpc data to %s via %s. corr id: %s', routingKey, replyTo, corrId);
+
+          if (!ackd) {
             self.ch.ack(msg);
-          } catch (e) {
-            console.log(e);
+            ackd = true;
           }
         }
       };
 
-      try {
-        inData = self.fromAMQPMessage(msg);
-      } catch (e) {
-        err = e;
-      }
+      inData = self.fromAMQPMessage(msg);
 
       return fn(err, inData, replyFn);
     });

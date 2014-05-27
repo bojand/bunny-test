@@ -34,5 +34,32 @@ exports.fib = function (req, res) {
 };
 
 exports.cap = function (req, res) {
+  var msg = req.param('msg') || '';
+  App.amqp.rpc('cap_queue', msg, function (err, rpcRes) {
+    if (err) {
+      console.dir(err);
+      return res.send(500);
+    }
+
+    return res.send(rpcRes);
+  });
+};
+
+exports.prog = function (req, res) {
+  var msg = req.param('msg') || '';
+
   res.send(200);
+
+  App.amqp.rpc('prog_queue', msg, { autoDeleteCallback: false }, function (err, rpcRes, fullMsg) {
+    if (err) {
+      console.dir(err);
+    }
+
+    console.dir(rpcRes);
+
+    if (rpcRes.toString() === '100') {
+      console.log('deleteing callback');
+      App.amqp.deleteRpcCallback(fullMsg.properties.correlationId);
+    }
+  });
 };
