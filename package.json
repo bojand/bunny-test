@@ -11,7 +11,7 @@
     "underscore": "~1.6.0",
     "node-uuid": "~1.4.1",
     "debug": "~0.8.1",
-    "bunnydo": "file:/Users/bdjurkovic/dev/nodejs/bunnydo"
+    "bunnydo": "~0.0.1"
   },
   "engines": {
     "node": ">=0.10.x"
